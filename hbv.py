@@ -159,29 +159,28 @@ def hbv_run(
         soil[t] = soil[t - 1] + liq_water[t] - dq[t] - ea[t]
 
         # Upper reservoir storage s1 [mm]
-		s1[t] = (
-		    s1[t - 1]                          # storage carried over from previous day
-		    + dq[t]                            # inflow from soil as effective precipitation
-		    - max(0.0, s1[t - 1] - lthr) * k0  # fast runoff (quickflow) when storage exceeds threshold lthr
-		    - s1[t - 1] * k1                   # linear outflow (interflow) from upper reservoir
-		    - s1[t - 1] * kp                   # percolation loss from upper to lower reservoir
-		)
+        s1[t] = (
+            s1[t - 1]                          # storage carried over from previous day
+            + dq[t]                            # inflow from soil as effective precipitation
+            - max(0.0, s1[t - 1] - lthr) * k0  # fast runoff (quickflow) when storage exceeds threshold lthr
+            - s1[t - 1] * k1                   # linear outflow (interflow) from upper reservoir
+            - s1[t - 1] * kp                   # percolation loss from upper to lower reservoir
+        )
 
         # Lower reservoir storage s2 [mm]
-		s2[t] = (
-		    s2[t - 1]                          # previous groundwater storage
-		    + s1[t - 1] * kp                   # recharge from upper reservoir via percolation
-		    - s2[t - 1] * k2                   # linear baseflow discharge
-		)
+        s2[t] = (
+            s2[t - 1]                          # previous groundwater storage
+            + s1[t - 1] * kp                   # recharge from upper reservoir via percolation
+            - s2[t - 1] * k2                   # linear baseflow discharge
+        )
 
         # Total runoff generation q [mm/day]
-		q_mmday[t] = (
-		    max(0.0, s1[t - 1] - lthr) * k0    # fast runoff component from upper reservoir
-		    + s1[t] * k1                      # slower interflow from upper reservoir
-		    + s2[t] * k2                      # baseflow from lower reservoir
-		)
-
-
+        q_mmday[t] = (
+            max(0.0, s1[t - 1] - lthr) * k0    # fast runoff component from upper reservoir
+            + s1[t] * k1                       # slower interflow from upper reservoir
+            + s2[t] * k2                       # baseflow from lower reservoir
+        )
+        
         # Convert runoff depth (mm/day) to discharge (m^3/s) using catchment area (km^2)
         Q_m3s[t] = (q_mmday[t] * area_km2 * 1000.0) / 86400.0
 
