@@ -16,9 +16,14 @@ It also includes uncertainty analysis and sensitivity analysis for HBV.
 - metrics.py  
   Helper functions for commonly used model performance metrics.
 
-- HBV_demo.ipynb  
+- HBV_demo.ipynb
   Demonstration notebook illustrating model setup, execution, and evaluation.
 
+- HBV_uncertainty_propagation.ipynb
+  Uncertainty propagation using Latin Hypercube Sampling (LHS) to explore parameter uncertainty effects on simulated discharge.
+
+- HBV_sensitivity_analysis.ipynb
+  Sensitivity analysis comparing four methods: One-at-a-Time (OAT), Morris, Sobol (first/second/total order), and Distance-based GSA (DGSA).
 
 ## installation
 
@@ -34,10 +39,17 @@ You may then run the demonstration notebook or import the model directly in Pyth
 
 The recommended starting point is the `HBV_demo.ipynb` notebook. It demonstrates:
 
-- Model structure and parameterization  
-- Forcing data input  
-- Simulation of streamflow  
-- Evaluation using standard performance metrics  
+- Model structure and parameterization
+- Forcing data input
+- Simulation of streamflow
+- Evaluation using standard performance metrics
+
+Additional notebooks:
+
+- `HBV_uncertainty_propagation.ipynb`: Propagates parameter uncertainty through the model using LHS ensembles and visualizes the spread in simulated discharge.
+- `HBV_sensitivity_analysis.ipynb`: Compares OAT, Morris, Sobol, and DGSA sensitivity methods across multiple flow metrics (Mean Q, Q10, Q90) and full time series response.
+
+All notebooks include a Colab badge for one-click execution in Google Colab.
 
 Users are encouraged to modify parameters and forcings to explore hydrologic process sensitivity, including snow accumulation and melt, soil moisture accounting, and runoff generation.
 
@@ -55,6 +67,9 @@ This implementation was modified from the following sources:
   https://www.mathworks.com/matlabcentral/fileexchange/41395-hbv-edu-hydrologic-model
 
 - https://github.com/johnrobertcraven/hbv_hydromodel.git
+
+- Perzan, Z. pyDGSA: Distance-based Generalized Sensitivity Analysis in Python
+  https://github.com/zperzan/pyDGSA
 
 Portions of the repository documentation were drafted with assistance from Claude AI, ChatGPT and subsequently reviewed and edited by the author.
 
