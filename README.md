@@ -6,6 +6,8 @@ A Python implementation of the HBV conceptual lumped hydrologic model for educat
 
 This repository provides a simple and readable Python implementation of the HBV rainfall–runoff model. The code is designed primarily for teaching hydrologic processes, demonstrating conceptual model structure, and supporting small-scale experiments and reproducible examples. It is not intended to be a fully featured operational hydrologic modeling system. 
 
+It also includes uncertainty analysis and sensitivity analysis for HBV. 
+
 ## repository contents
 
 - hbv.py  
@@ -54,7 +56,7 @@ This implementation was modified from the following sources:
 
 - https://github.com/johnrobertcraven/hbv_hydromodel.git
 
-Portions of the repository documentation were drafted with assistance from OpenAI ChatGPT and subsequently reviewed and edited by the author.
+Portions of the repository documentation were drafted with assistance from Claude AI, ChatGPT and subsequently reviewed and edited by the author.
 
 ## license
 
