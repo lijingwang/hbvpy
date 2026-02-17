@@ -6,18 +6,21 @@ A Python implementation of the HBV conceptual lumped hydrologic model for educat
 
 This repository provides a simple and readable Python implementation of the HBV rainfall–runoff model. The code is designed primarily for teaching hydrologic processes, demonstrating conceptual model structure, and supporting small-scale experiments and reproducible examples. It is not intended to be a fully featured operational hydrologic modeling system. 
 
-It also includes uncertainty analysis and sensitivity analysis for HBV. 
+It also includes model calibration, uncertainty analysis, and sensitivity analysis for HBV.
 
 ## repository contents
 
-- hbv.py  
+- hbv.py
   Core HBV conceptual hydrologic model implementation.
 
-- metrics.py  
+- metrics.py
   Helper functions for commonly used model performance metrics.
 
 - HBV_demo.ipynb
   Demonstration notebook illustrating model setup, execution, and evaluation.
+
+- HBV_calibration.ipynb
+  Model calibration and uncertainty estimation comparing multiple approaches: local optimization (L-BFGS-B), global optimization (PSO), multi-objective optimization, ABC (Approximate Bayesian Computation), and GLUE (Generalized Likelihood Uncertainty Estimation). Includes observation error analysis and method comparison.
 
 - HBV_uncertainty_propagation.ipynb
   Uncertainty propagation using Latin Hypercube Sampling (LHS) to explore parameter uncertainty effects on simulated discharge.
@@ -46,6 +49,7 @@ The recommended starting point is the `HBV_demo.ipynb` notebook. It demonstrates
 
 Additional notebooks:
 
+- `HBV_calibration.ipynb`: Demonstrates equifinality, compares deterministic optimization (L-BFGS-B, PSO) with stochastic/Bayesian methods (ABC, GLUE), explores multi-objective trade-offs, observation error impacts, and different GLUE weighting schemes.
 - `HBV_uncertainty_propagation.ipynb`: Propagates parameter uncertainty through the model using LHS ensembles and visualizes the spread in simulated discharge.
 - `HBV_sensitivity_analysis.ipynb`: Compares OAT, Morris, Sobol, and DGSA sensitivity methods across multiple flow metrics (Mean Q, Q10, Q90) and full time series response.
 
