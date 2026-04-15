@@ -30,6 +30,196 @@ from typing import Dict, List, Optional, Tuple, Union
 
 PARAM_NAMES = ["d", "fc", "beta", "cpar", "k0", "lthr", "k1", "k2", "kp", "pwp"]
 
+
+# ======================================================================
+# Fast path: pre-compute forcing + torch.compile on the state loop
+# ======================================================================
+
+def prepare_forcing(
+    forcing: pd.DataFrame,
+    pet_monthly: pd.DataFrame,
+    device: str = "cpu",
+) -> dict:
+    """
+    Convert forcing DataFrame to tensors ONCE before training.
+
+    Call this outside the epoch loop.  The returned dict is passed
+    directly to hbv_run_fast() every epoch — no repeated pandas → tensor
+    conversion.
+
+    Returns
+    -------
+    dict with keys:
+        prec, temp      : (n_days,) float32 tensors on device
+        pe_lut          : (12,) monthly PET values
+        T_avg_lut       : (12,) monthly mean temperature
+        month_idx       : (n_days,) int64 month indices 0..11
+        times           : DatetimeIndex (for results DataFrame)
+    """
+    forcing = forcing.copy()
+    forcing["Time"] = pd.to_datetime(forcing["Time"])
+    forcing = forcing.sort_values("Time").reset_index(drop=True)
+
+    if "month" in pet_monthly.columns:
+        pet = pet_monthly.copy().set_index("month")
+    else:
+        pet = pet_monthly.copy()
+        pet.index = pet.index.astype(int)
+
+    T_avg_np   = np.array([pet.loc[m, "T_avg_month"] for m in range(1, 13)], dtype=float)
+    PEm_day_np = np.array([pet.loc[m, "PEm_day"]     for m in range(1, 13)], dtype=float)
+
+    return {
+        "prec"     : torch.tensor(forcing["Precipitation"].to_numpy(dtype=float),
+                                  dtype=torch.float32, device=device),
+        "temp"     : torch.tensor(forcing["Temperature"].to_numpy(dtype=float),
+                                  dtype=torch.float32, device=device),
+        "T_avg_lut": torch.tensor(T_avg_np,   dtype=torch.float32, device=device),
+        "pe_lut"   : torch.tensor(PEm_day_np, dtype=torch.float32, device=device),
+        "month_idx": torch.tensor(
+                         forcing["Time"].dt.month.to_numpy(dtype=int) - 1,
+                         dtype=torch.long, device=device),
+        "times"    : forcing["Time"],
+        "n_days"   : len(forcing),
+    }
+
+
+def _hbv_state_loop(
+    prec: torch.Tensor,
+    temp: torch.Tensor,
+    pe_all: torch.Tensor,
+    is_cold: torch.Tensor,
+    melt_all: torch.Tensor,
+    params: torch.Tensor,
+    snow0: torch.Tensor,
+    soil0: torch.Tensor,
+    s1_0: torch.Tensor,
+    s2_0: torch.Tensor,
+    area_scale: float,
+) -> torch.Tensor:
+    """
+    Pure-tensor HBV state loop.  No pandas, no list appends, no stack.
+    Decorated with torch.compile to remove Python interpreter overhead.
+
+    All recurrent states are tracked as scalar tensors — autograd builds
+    the computation graph through each timestep exactly as before.
+    """
+    n = prec.shape[0]
+    d, fc, beta, _, k0, lthr, k1, k2, kp, pwp = [params[i] for i in range(10)]
+
+    snow_t = snow0
+    soil_t = soil0
+    s1_t   = s1_0
+    s2_t   = s2_0
+
+    Q_out = torch.zeros(n, dtype=prec.dtype, device=prec.device)
+
+    for t in range(1, n):
+        # Snow routine
+        actual_melt = torch.minimum(snow_t, melt_all[t])
+        snow_t = (
+            is_cold[t] * (snow_t + prec[t])
+            + (1.0 - is_cold[t]) * torch.clamp(snow_t - melt_all[t], min=0.0)
+        )
+        liq_t = (1.0 - is_cold[t]) * (prec[t] + actual_melt)
+
+        # ET and soil
+        ea_t   = pe_all[t] * torch.clamp(soil_t / (pwp + 1e-6), min=0.0, max=1.0)
+        dq_t   = liq_t * torch.clamp(soil_t / (fc + 1e-6), min=0.0, max=1.0) ** beta
+        soil_t = torch.clamp(soil_t + liq_t - dq_t - ea_t, min=0.0)
+
+        # Reservoirs
+        qf    = torch.clamp(s1_t - lthr, min=0.0) * k0
+        s1_t  = torch.clamp(s1_t + dq_t - qf - s1_t * k1 - s1_t * kp, min=0.0)
+        s2_t  = torch.clamp(s2_t + s1_t * kp - s2_t * k2, min=0.0)
+
+        Q_out[t] = torch.clamp(qf + s1_t * k1 + s2_t * k2, min=0.0)
+
+    return Q_out * area_scale
+
+
+# Compile the loop — removes Python interpreter overhead from every iteration.
+# First call pays a one-time compilation cost (~5s); all subsequent calls are fast.
+# Falls back to eager mode gracefully if compile is unavailable.
+try:
+    _hbv_state_loop_compiled = torch.compile(_hbv_state_loop)
+except Exception:
+    _hbv_state_loop_compiled = _hbv_state_loop
+
+
+def hbv_run_fast(
+    forcing_tensors: dict,
+    params: Union[torch.Tensor, np.ndarray, list],
+    area_km2: float = 410.0,
+    Tsnow_thresh: float = 0.0,
+    init_state: Optional[Dict[str, float]] = None,
+) -> torch.Tensor:
+    """
+    Fast differentiable HBV forward pass.
+
+    Requires forcing to be pre-converted with prepare_forcing() — call
+    that once before training, then call hbv_run_fast() every epoch.
+
+    Two speedups over hbv_run_differentiable():
+      1. No pandas → tensor conversion (done once in prepare_forcing)
+      2. Forcing-derived quantities (PET, snow mask) pre-computed as
+         full tensors before the state loop — not recomputed each step
+      3. torch.compile removes Python interpreter overhead from the loop
+
+    Parameters
+    ----------
+    forcing_tensors : dict
+        Output of prepare_forcing().
+    params : tensor or array, shape (10,)
+        [d, fc, beta, cpar, k0, lthr, k1, k2, kp, pwp]
+        Pass with requires_grad=True for gradient-based use.
+    area_km2 : float
+    Tsnow_thresh : float
+    init_state : dict or None
+
+    Returns
+    -------
+    Q_m3s : torch.Tensor, shape (n_days,)
+        Gradients flow through this tensor.
+    """
+    prec      = forcing_tensors["prec"]
+    temp      = forcing_tensors["temp"]
+    T_avg_lut = forcing_tensors["T_avg_lut"]
+    pe_lut    = forcing_tensors["pe_lut"]
+    month_idx = forcing_tensors["month_idx"]
+    device    = prec.device
+
+    if not isinstance(params, torch.Tensor):
+        params = torch.tensor(params, dtype=torch.float32, device=device)
+    else:
+        params = params.to(device=device, dtype=torch.float32)
+
+    cpar   = params[3]
+    Tsnow  = torch.tensor(Tsnow_thresh, dtype=torch.float32, device=device)
+
+    # ------------------------------------------------------------------
+    # Pre-compute ALL forcing-derived quantities as full tensors.
+    # These have no state dependency → computed once, outside the loop.
+    # ------------------------------------------------------------------
+    pe_all   = torch.clamp(
+                   (1.0 + cpar * (temp - T_avg_lut[month_idx])) * pe_lut[month_idx],
+                   min=0.0)                                          # (n_days,)
+    is_cold  = (temp < Tsnow).to(dtype=torch.float32)               # (n_days,) binary
+    melt_all = torch.clamp(params[0] * (temp - Tsnow), min=0.0)     # (n_days,)
+
+    init = init_state or {}
+    snow0 = torch.tensor(float(init.get("snow", 0.0)), dtype=torch.float32, device=device)
+    soil0 = torch.tensor(float(init.get("soil", 0.0)), dtype=torch.float32, device=device)
+    s1_0  = torch.tensor(float(init.get("s1",   0.0)), dtype=torch.float32, device=device)
+    s2_0  = torch.tensor(float(init.get("s2",   0.0)), dtype=torch.float32, device=device)
+
+    area_scale = float(area_km2 * 1000.0 / 86400.0)
+
+    return _hbv_state_loop_compiled(
+        prec, temp, pe_all, is_cold, melt_all,
+        params, snow0, soil0, s1_0, s2_0, area_scale,
+    )
+
 # Physically reasonable default bounds for constrained calibration
 PARAM_BOUNDS = {
     #        lower   upper
